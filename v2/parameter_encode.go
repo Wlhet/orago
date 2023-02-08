@@ -1,4 +1,4 @@
-package orago
+package go_ora
 
 import (
 	"bytes"
@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/wlhet/orago/converters"
+	"github.com/sijms/go-ora/v2/converters"
 )
 
 func (par *ParameterInfo) setForNull() {
@@ -51,6 +51,7 @@ func (par *ParameterInfo) setForUDT() {
 	par.CharsetForm = 0
 	par.MaxLen = 2000
 }
+
 func (par *ParameterInfo) encodeInt(value int64) {
 	par.setForNumber()
 	par.BValue = converters.EncodeInt64(value)
@@ -123,6 +124,12 @@ func (par *ParameterInfo) encodeValue(val driver.Value, size int, connection *Co
 		par.setForNull()
 		return nil
 	}
+	// put common values
+	par.Flag = 3
+	par.CharsetID = connection.tcpNego.ServerCharset
+	par.CharsetForm = 1
+	par.BValue = nil
+
 	tempType := reflect.TypeOf(val)
 	if tempType.Kind() == reflect.Ptr {
 		tempType = tempType.Elem()
@@ -130,6 +137,71 @@ func (par *ParameterInfo) encodeValue(val driver.Value, size int, connection *Co
 	if tempType != reflect.TypeOf([]byte{}) {
 		if tempType.Kind() == reflect.Array || tempType.Kind() == reflect.Slice {
 			return par.encodeArrayValue(val, size, connection)
+		}
+	}
+	if temp, ok := val.(driver.Valuer); ok {
+		if temp == nil || (reflect.ValueOf(temp).Kind() == reflect.Ptr && reflect.ValueOf(temp).IsNil()) {
+			// bypass nil pointer
+		} else {
+			tempVal, err := temp.Value()
+			if err != nil {
+				return err
+			}
+			if tempVal == nil {
+				switch val.(type) {
+				case sql.NullInt32:
+					par.setForNumber()
+				case sql.NullBool:
+					par.setForNumber()
+				case sql.NullTime:
+					par.setForTime()
+				case sql.NullByte:
+					par.setForNumber()
+				case sql.NullFloat64:
+					par.setForNumber()
+				case sql.NullInt16:
+					par.setForNumber()
+				case sql.NullInt64:
+					par.setForNumber()
+				case sql.NullString:
+					par.encodeString("", nil, size)
+				case NullNVarChar:
+					par.CharsetForm = 2
+					par.CharsetID = connection.tcpNego.ServernCharset
+					par.encodeString("", nil, size)
+				case NullTimeStamp:
+					par.setForTime()
+					par.DataType = TIMESTAMP
+				case *sql.NullInt32:
+					par.setForNumber()
+				case *sql.NullBool:
+					par.setForNumber()
+				case *sql.NullTime:
+					par.setForTime()
+				case *sql.NullByte:
+					par.setForNumber()
+				case *sql.NullFloat64:
+					par.setForNumber()
+				case *sql.NullInt16:
+					par.setForNumber()
+				case *sql.NullInt64:
+					par.setForNumber()
+				case *sql.NullString:
+					par.encodeString("", nil, size)
+				case *NullNVarChar:
+					par.CharsetForm = 2
+					par.CharsetID = connection.tcpNego.ServernCharset
+					par.encodeString("", nil, size)
+				case *NullTimeStamp:
+					par.setForTime()
+					par.DataType = TIMESTAMP
+				default:
+					par.encodeString("", nil, size)
+				}
+				return nil
+			} else {
+				val = tempVal
+			}
 		}
 	}
 	switch value := val.(type) {
@@ -241,140 +313,10 @@ func (par *ParameterInfo) encodeValue(val driver.Value, size int, connection *Co
 				return err
 			}
 		}
-	case sql.NullByte:
-		if value.Valid {
-			par.encodeInt(int64(value.Byte))
-		} else {
-			par.setForNull()
-		}
-	case sql.NullInt16:
-		if value.Valid {
-			par.encodeInt(int64(value.Int16))
-		} else {
-			par.setForNull()
-		}
-	case sql.NullInt32:
-		if value.Valid {
-			par.encodeInt(int64(value.Int32))
-		} else {
-			par.setForNull()
-		}
-	case sql.NullInt64:
-		if value.Valid {
-			par.encodeInt(value.Int64)
-		} else {
-			par.setForNull()
-		}
-	case *sql.NullByte:
-		if value == nil {
-			par.setForNumber()
-		} else {
-			if value.Valid {
-				par.encodeInt(int64(value.Byte))
-			} else {
-				par.setForNull()
-			}
-		}
-	case *sql.NullInt16:
-		if value == nil {
-			par.setForNumber()
-		} else {
-			if value.Valid {
-				par.encodeInt(int64(value.Int16))
-			} else {
-				par.setForNull()
-			}
-		}
-	case *sql.NullInt32:
-		if value == nil {
-			par.setForNumber()
-		} else {
-			if value.Valid {
-				par.encodeInt(int64(value.Int32))
-			} else {
-				par.setForNull()
-			}
-		}
-	case *sql.NullInt64:
-		if value == nil {
-			par.setForNumber()
-		} else {
-			if value.Valid {
-				par.encodeInt(value.Int64)
-			} else {
-				par.setForNull()
-			}
-		}
-	case sql.NullFloat64:
-		if value.Valid {
-			err = par.encodeFloat(value.Float64)
-			if err != nil {
-				return err
-			}
-		} else {
-			par.setForNull()
-		}
-	case *sql.NullFloat64:
-		if value == nil {
-			par.setForNumber()
-		} else {
-			if value.Valid {
-				err = par.encodeFloat(value.Float64)
-				if err != nil {
-					return err
-				}
-			} else {
-				par.setForNull()
-			}
-		}
-	case sql.NullBool:
-		if value.Valid {
-			var tempVal int64 = 0
-			if value.Bool {
-				tempVal = 1
-			}
-			par.encodeInt(tempVal)
-		} else {
-			par.setForNull()
-		}
-	case *sql.NullBool:
-		if value == nil {
-			par.setForNumber()
-		} else {
-			if value.Valid {
-				var tempVal int64 = 0
-				if value.Bool {
-					tempVal = 1
-				}
-				par.encodeInt(tempVal)
-			} else {
-				par.setForNull()
-			}
-		}
 	case time.Time:
 		par.encodeTime(value)
 	case *time.Time:
-		if value == nil {
-			par.setForTime()
-		} else {
-			par.encodeTime(*value)
-		}
-	case sql.NullTime:
-		if value.Valid {
-			par.encodeTime(value.Time)
-		} else {
-			par.setForNull()
-		}
-	case *sql.NullTime:
-		if value == nil {
-			par.setForTime()
-		} else {
-			if value.Valid {
-				par.encodeTime(value.Time)
-			} else {
-				par.setForNull()
-			}
-		}
+		par.encodeTime(*value)
 	case TimeStamp:
 		par.encodeTimeStamp(value)
 	case *TimeStamp:
@@ -383,24 +325,6 @@ func (par *ParameterInfo) encodeValue(val driver.Value, size int, connection *Co
 			par.DataType = TIMESTAMP
 		} else {
 			par.encodeTimeStamp(*value)
-		}
-
-	case NullTimeStamp:
-		if value.Valid {
-			par.encodeTimeStamp(value.TimeStamp)
-		} else {
-			par.setForNull()
-		}
-	case *NullTimeStamp:
-		if value == nil {
-			par.setForTime()
-			par.DataType = TIMESTAMP
-		} else {
-			if value.Valid {
-				par.encodeTimeStamp(value.TimeStamp)
-			} else {
-				par.setForNull()
-			}
 		}
 	case NClob:
 		par.CharsetForm = 2
@@ -519,6 +443,9 @@ func (par *ParameterInfo) encodeValue(val driver.Value, size int, connection *Co
 		}
 	case Blob:
 		par.encodeRaw(value.Data, size)
+		if par.MaxLen == 0 {
+			par.MaxLen = 1
+		}
 		if par.Direction == Output {
 			par.DataType = OCIBlobLocator
 		} else {
@@ -543,6 +470,9 @@ func (par *ParameterInfo) encodeValue(val driver.Value, size int, connection *Co
 			par.encodeRaw(nil, size)
 		} else {
 			par.encodeRaw(value.Data, size)
+		}
+		if par.MaxLen == 0 {
+			par.MaxLen = 1
 		}
 		if par.Direction == Output {
 			par.DataType = OCIBlobLocator
@@ -592,22 +522,6 @@ func (par *ParameterInfo) encodeValue(val driver.Value, size int, connection *Co
 			}
 			par.encodeString(*value, connection.strConv, size)
 		}
-	case sql.NullString:
-		if value.Valid {
-			par.encodeString(value.String, connection.strConv, size)
-		} else {
-			par.setForNull()
-		}
-	case *sql.NullString:
-		if value == nil {
-			par.encodeString("", connection.strConv, size)
-		} else {
-			if value.Valid {
-				par.encodeString(value.String, connection.strConv, size)
-			} else {
-				par.setForNull()
-			}
-		}
 	case NVarChar:
 		par.CharsetForm = 2
 		par.CharsetID = connection.tcpNego.ServernCharset
@@ -620,26 +534,29 @@ func (par *ParameterInfo) encodeValue(val driver.Value, size int, connection *Co
 		} else {
 			par.encodeString(string(*value), connection.strConv, size)
 		}
-	case NullNVarChar:
-		if value.Valid {
-			par.CharsetForm = 2
-			par.CharsetID = connection.tcpNego.ServernCharset
-			par.encodeString(string(value.NVarChar), connection.strConv, size)
-		} else {
-			par.setForNull()
-		}
+	case *sql.NullBool:
+		par.setForNumber()
+	case *sql.NullByte:
+		par.setForNumber()
+	case *sql.NullInt16:
+		par.setForNumber()
+	case *sql.NullInt32:
+		par.setForNumber()
+	case *sql.NullInt64:
+		par.setForNumber()
+	case *sql.NullTime:
+		par.setForTime()
+	case *sql.NullFloat64:
+		par.setForNumber()
+	case *sql.NullString:
+		par.encodeString("", nil, size)
 	case *NullNVarChar:
+		par.encodeString("", nil, size)
 		par.CharsetForm = 2
 		par.CharsetID = connection.tcpNego.ServernCharset
-		if value == nil {
-			par.encodeString("", connection.strConv, size)
-		} else {
-			if value.Valid {
-				par.encodeString(string(value.NVarChar), connection.strConv, size)
-			} else {
-				par.setForNull()
-			}
-		}
+	case *NullTimeStamp:
+		par.setForTime()
+		par.DataType = TIMESTAMP
 	default:
 		custVal := reflect.ValueOf(val)
 		if custVal.Kind() == reflect.Ptr {
@@ -677,15 +594,3 @@ func (par *ParameterInfo) encodeValue(val driver.Value, size int, connection *Co
 	}
 	return nil
 }
-
-//func fromStringToClob(s string) Clob {
-//	return Clob{
-//		String: s,
-//	}
-//}
-
-//func fromBytesToBlob(b []byte) Blob {
-//	return Blob{
-//		Data: b,
-//	}
-//}

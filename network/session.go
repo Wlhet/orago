@@ -88,8 +88,8 @@ func NewSessionWithInputBufferForDebug(input []byte) *Session {
 	}
 }
 func NewSession(connOption *ConnectionOption) *Session {
-
 	return &Session{
+		ctx:      context.Background(),
 		conn:     nil,
 		inBuffer: nil,
 		index:    0,
@@ -270,7 +270,8 @@ func (session *Session) negotiate() {
 // then send connect packet to the server and
 // receive either accept, redirect or refuse packet
 func (session *Session) Connect(ctx context.Context) error {
-	session.ctx = ctx
+	session.StartContext(ctx)
+	defer session.EndContext()
 	connOption := session.Context.ConnOption
 	session.Disconnect()
 	connOption.Tracer.Print("Connect")

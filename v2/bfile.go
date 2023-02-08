@@ -1,4 +1,4 @@
-package orago
+package go_ora
 
 import (
 	"bytes"

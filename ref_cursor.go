@@ -1,13 +1,22 @@
-package orago
+package go_ora
+
+import (
+	"github.com/wlhet/orago/network"
+)
 
 type RefCursor struct {
 	defaultStmt
 	len        uint8
 	MaxRowSize int
 	parent     *defaultStmt
+	//ID         int
+	//scnFromExe []int
+	//connection *Connection
+	//noOfRowsToFetch int
+	//hasMoreRows bool
 }
 
-func (cursor *RefCursor) load() error {
+func (cursor *RefCursor) load(session *network.Session) error {
 	// initialize ref cursor object
 	cursor.text = ""
 	cursor._hasLONG = false
@@ -15,9 +24,8 @@ func (cursor *RefCursor) load() error {
 	cursor._hasReturnClause = false
 	cursor.disableCompression = true
 	cursor.arrayBindCount = 1
-	cursor.scnForSnapshot = make([]int, 2)
+	cursor.scnFromExe = make([]int, 2)
 	cursor.stmtType = SELECT
-	session := cursor.connection.session
 	var err error
 	cursor.len, err = session.GetByte()
 	if err != nil {
@@ -38,11 +46,18 @@ func (cursor *RefCursor) load() error {
 			return err
 		}
 		for x := 0; x < len(cursor.columns); x++ {
-			err = cursor.columns[x].load(cursor.connection)
+			err = cursor.columns[x].load(session)
 			if err != nil {
 				return err
 			}
 		}
+		//for _, col := range cursor.Cols {
+		//	err = col.load(session)
+		//	fmt.Println(col)
+		//	if err != nil {
+		//		return err
+		//	}
+		//}
 	}
 	_, err = session.GetDlc()
 	if err != nil {
@@ -91,8 +106,8 @@ func (cursor *RefCursor) Query() (*DataSet, error) {
 	cursor.connection.connOption.Tracer.Printf("Query RefCursor: %d", cursor.cursorID)
 	cursor._noOfRowsToFetch = cursor.connection.connOption.PrefetchRows
 	cursor._hasMoreRows = true
-	if len(cursor.parent.scnForSnapshot) > 0 {
-		copy(cursor.scnForSnapshot, cursor.parent.scnForSnapshot)
+	if len(cursor.parent.scnFromExe) > 0 {
+		copy(cursor.scnFromExe, cursor.parent.scnFromExe)
 	}
 	session := cursor.connection.session
 	session.ResetBuffer()
@@ -107,7 +122,6 @@ func (cursor *RefCursor) Query() (*DataSet, error) {
 	}
 	return dataSet, nil
 }
-
 func (cursor *RefCursor) write() error {
 	err := cursor.basicWrite(cursor.getExeOptions(), false, false)
 	if err != nil {
@@ -115,3 +129,19 @@ func (cursor *RefCursor) write() error {
 	}
 	return cursor.connection.session.Write()
 }
+
+func (cursor *RefCursor) Close() error {
+	return nil
+}
+
+//func (cursor *RefCursor) Exec(args []driver.Value) (driver.Result, error) {
+//	return nil, nil
+//}
+//
+//func (cursor *RefCursor) NumInput() int {
+//	return -1;
+//}
+//func (cursor *RefCursor) readQ() (*DataSet, error) {
+//	dataSet := new(DataSet)
+//	return dataSet, nil
+//}

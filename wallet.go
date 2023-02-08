@@ -1,4 +1,4 @@
-package orago
+package go_ora
 
 import (
 	"bytes"
@@ -18,7 +18,7 @@ import (
 	"unicode/utf16"
 )
 
-// type CertificateData
+//type CertificateData
 type wallet struct {
 	file          string
 	password      []byte
