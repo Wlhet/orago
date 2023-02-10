@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/sijms/go-ora/v2/converters"
+	"github.com/wlhet/orago/converters"
 )
 
 func (par *ParameterInfo) setForNull() {

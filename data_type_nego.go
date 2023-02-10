@@ -48,46 +48,20 @@ func buildTypeNego(nego *TCPNego, session *network.Session) *DataTypeNego {
 		MessageCode: 2,
 		Server:      nego,
 		TypeAndRep:  make([]int16, bufferGrow),
-
 		CompileTimeCaps: []byte{
-			6, 1, 0, 0, 106, 1, 1, 12,
+			6, 1, 0, 0, 106, 1, 1, 11,
 			1, 1, 1, 1, 1, 1, 0, 41,
-			144, 3, 7, 3, 0, 1, 0, 79,
-			1, 55, 4, 1, 0, 0, 0, 28,
-			0, 0, 10, 160, 3, 179, 0,
-			15, 6,
+			144, 3, 7, 3, 0, 1, 0, 235,
+			1, 0, 5, 1, 0, 0, 0, 24,
+			0, 0, 7, 32, 2, 58, 0, 0, 5,
 		},
 		RuntimeCap:             []byte{2, 1, 0, 0, 0, 0, 0},
 		b32kTypeSupported:      false,
 		supportSessionStateOps: false,
 	}
-
-	//if (!this.connection.enableDataInLocator) {
-	//	var10000 = this.jdbcThinCompileTimeCapabilities;
-	//	var10000[23] &= -5;
-	//}
-	//
-	//if (var4) {
-	//	var10000 = this.jdbcThinRuntimeCapabilities;
-	//	var10000[6] |= KPCCAP_RTB_TTC_ZCPY;
-	//}
-	//
-	//if (var2 == null || var2.length < 1 || (var2[1] & 1) != 1) {
-	//	var10000 = this.jdbcThinRuntimeCapabilities;
-	//	var10000[1] &= -2;
-	//}
-
 	if len(result.Server.ServerCompileTimeCaps) <= 27 || result.Server.ServerCompileTimeCaps[27] == 0 {
 		result.CompileTimeCaps[27] = 0
 	}
-	if !result.Server.hasCompileTimeCaps(4, 8) {
-		result.CompileTimeCaps[4] = 0
-	}
-	if !result.Server.hasCompileTimeCaps(4, 32) {
-		result.CompileTimeCaps[4] &= 223
-		//this.connection.isO7L_MRExposed = false;
-	}
-
 	xmlTypeClientSideDecoding := false
 	if len(result.Server.ServerCompileTimeCaps) > 7 {
 		if result.Server.ServerCompileTimeCaps[7] >= 8 && xmlTypeClientSideDecoding {
@@ -112,14 +86,10 @@ func buildTypeNego(nego *TCPNego, session *network.Session) *DataTypeNego {
 		}
 	}
 	if len(result.Server.ServerCompileTimeCaps) <= 37 || result.Server.ServerCompileTimeCaps[37]&2 != 2 {
-		result.CompileTimeCaps[37] &= 253
-		result.RuntimeCap[1] &= 254
+		result.CompileTimeCaps[37] = 0
+		result.CompileTimeCaps[1] = 0
 	}
-	//this.connection.isServerBigSCN = this.connection.getServerCompileTimeCapability(7) >= 8;
-	//if (this.connection.enableTGSupport || this.connection.enableACSupport) {
-	//	var10000 = this.jdbcThinCompileTimeCapabilities;
-	//	var10000[37] = (byte)(var10000[37] | 8);
-	//}
+
 	result.TypeAndRep[0] = 1
 	result.addTypeRep(1, 1, 1)
 	result.addTypeRep(2, 2, 10)
@@ -415,7 +385,7 @@ func buildTypeNego(nego *TCPNego, session *network.Session) *DataTypeNego {
 	result.addTypeRep(231, 231, 1)
 	result.addTypeRep(232, 231, 1)
 	result.addTypeRep(233, 233, 1)
-	result.addTypeRep(252, 252, 0)
+	result.addTypeRep(252, 252, 1)
 	result.addTypeRep(241, 109, 1)
 	result.addTypeRep(515, 0, 0)
 

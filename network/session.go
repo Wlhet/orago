@@ -20,6 +20,8 @@ import (
 	"github.com/wlhet/orago/converters"
 )
 
+var ErrConnectionReset error = errors.New("connection reset")
+
 type Data interface {
 	Write(session *Session) error
 	Read(session *Session) error
@@ -88,6 +90,7 @@ func NewSessionWithInputBufferForDebug(input []byte) *Session {
 	}
 }
 func NewSession(connOption *ConnectionOption) *Session {
+
 	return &Session{
 		ctx:      context.Background(),
 		conn:     nil,
@@ -265,6 +268,31 @@ func (session *Session) negotiate() {
 	session.sslConn = tls.Client(session.conn, config)
 }
 
+func (session *Session) BreakConnection() error {
+	tracer := session.Context.ConnOption.Tracer
+	tracer.Print("Break Connection")
+	tempCtx := session.oldCtx
+	session.StartContext(context.Background())
+	defer func() {
+		session.EndContext()
+		session.oldCtx = tempCtx
+	}()
+	marker := newMarkerPacket(1, session.Context)
+	err := session.writePacket(marker)
+	if err != nil {
+		return err
+	}
+	_, err = session.readPacket()
+	if err != nil {
+		return err
+	}
+	_, err = session.readPacket()
+	if err != nil {
+		tracer.Print("Connection Break With Error: ", err)
+	}
+	return nil
+}
+
 // Connect perform network connection on address:port
 // check if the client need to use SSL
 // then send connect packet to the server and
@@ -279,12 +307,19 @@ func (session *Session) Connect(ctx context.Context) error {
 	var connected = false
 	var host *ServerAddr
 	var loop = true
-	dialer := net.Dialer{
-		Timeout: time.Second * session.Context.ConnOption.Timeout,
+	dialer := connOption.Dialer
+	if dialer == nil {
+		dialer = &net.Dialer{
+			Timeout: time.Second * session.Context.ConnOption.Timeout,
+		}
 	}
+	//connOption.serverIndex = 0
 	for loop {
 		host = connOption.GetActiveServer(false)
 		if host == nil {
+			if err != nil {
+				return err
+			}
 			return errors.New("no available servers to connect to")
 		}
 		addr := host.networkAddr()
@@ -364,7 +399,7 @@ func (session *Session) Connect(ctx context.Context) error {
 		}
 		connOption.Tracer.Printf("connection to %s:%d refused with error: %s", addr, port, refusePacket.Err.Error())
 		host = connOption.GetActiveServer(true)
-		if port == 0 {
+		if host == nil {
 			session.Disconnect()
 			return &refusePacket.Err
 		}
@@ -404,7 +439,7 @@ func (session *Session) Disconnect() {
 //		log.Printf("%#v\n", session.OutBuffer)
 //	}
 //
-// # Write send data store in output buffer through network
+// Write send data store in output buffer through network
 //
 // if data bigger than SessionDataUnit it should be divided into
 // segment and each segment sent in data packet
@@ -423,19 +458,22 @@ func (session *Session) Write() error {
 
 	segmentLen := int(session.Context.SessionDataUnit - 20)
 	offset := 0
-
-	for size > segmentLen {
-		pck, err := newDataPacket(outputBytes[offset:offset+segmentLen], session.Context)
-		if err != nil {
-			return err
+	if size > segmentLen {
+		segment := make([]byte, segmentLen)
+		for size > segmentLen {
+			copy(segment, outputBytes[offset:offset+segmentLen])
+			pck, err := newDataPacket(segment, session.Context)
+			if err != nil {
+				return err
+			}
+			err = session.writePacket(pck)
+			if err != nil {
+				session.outBuffer.Reset()
+				return err
+			}
+			size -= segmentLen
+			offset += segmentLen
 		}
-		err = session.writePacket(pck)
-		if err != nil {
-			session.outBuffer.Reset()
-			return err
-		}
-		size -= segmentLen
-		offset += segmentLen
 	}
 	if size != 0 {
 		pck, err := newDataPacket(outputBytes[offset:], session.Context)
@@ -454,9 +492,12 @@ func (session *Session) Write() error {
 // Read numBytes of data from input buffer if requested data is larger
 // than input buffer session will get the remaining from network stream
 func (session *Session) read(numBytes int) ([]byte, error) {
-	if session.index+numBytes > len(session.inBuffer) {
+	for session.index+numBytes > len(session.inBuffer) {
 		pck, err := session.readPacket()
 		if err != nil {
+			if e, ok := err.(net.Error); ok && e.Timeout() {
+				_ = session.BreakConnection()
+			}
 			return nil, err
 		}
 		if dataPck, ok := pck.(*DataPacket); ok {
@@ -465,6 +506,8 @@ func (session *Session) read(numBytes int) ([]byte, error) {
 			return nil, errors.New("the packet received is not data packet")
 		}
 	}
+	//ret := make([]byte, numBytes)
+	//copy(ret, session.inBuffer[session.index:session.index+numBytes])
 	ret := session.inBuffer[session.index : session.index+numBytes]
 	session.index += numBytes
 	return ret, nil
@@ -533,6 +576,7 @@ func (session *Session) readPacket() (PacketInterface, error) {
 				return nil, err
 			}
 			pckType := PacketType(head[4])
+			flag := head[5]
 			var length uint32
 			if session.Context.handshakeComplete && session.Context.Version >= 315 {
 				length = binary.BigEndian.Uint32(head)
@@ -565,7 +609,7 @@ func (session *Session) readPacket() (PacketInterface, error) {
 			}
 
 			if pckType == RESEND {
-				if session.Context.ConnOption.SSL {
+				if session.Context.ConnOption.SSL && flag&8 != 0 {
 					session.negotiate()
 				}
 				for _, pck := range session.sendPcks {
@@ -629,7 +673,11 @@ func (session *Session) readPacket() (PacketInterface, error) {
 		}
 		return pck, nil
 	case DATA:
-		return newDataPacketFromData(packetData, session.Context)
+		dataPck, err := newDataPacketFromData(packetData, session.Context)
+		if session.Context.ConnOption.SSL && dataPck != nil && dataPck.dataFlag == 0x8000 {
+			session.negotiate()
+		}
+		return dataPck, err
 	case MARKER:
 		pck := newMarkerPacketFromData(packetData, session.Context)
 		breakConnection := false
@@ -684,17 +732,20 @@ func (session *Session) readPacket() (PacketInterface, error) {
 				return nil, err
 			}
 		}
+		//return nil, ErrConnectionReset
 		packetData, err = readPacketData()
 		if err != nil {
 			return nil, err
 		}
 		dataPck, err := newDataPacketFromData(packetData, session.Context)
+		return dataPck, err
 		if err != nil {
 			return nil, err
 		}
 		if dataPck == nil {
 			return nil, errors.New("connection break")
 		}
+
 		session.inBuffer = dataPck.buffer
 		session.index = 0
 		loop := true
@@ -1079,40 +1130,80 @@ func (session *Session) GetNullTermString(maxSize int) (result string, err error
 
 // GetClr reed variable length bytearray from input buffer
 func (session *Session) GetClr() (output []byte, err error) {
-	var size uint8
-	var rb []byte
-	size, err = session.GetByte()
+	var nb byte
+	nb, err = session.GetByte()
 	if err != nil {
 		return
 	}
-	if size == 0 || size == 0xFF {
+	if nb == 0 || nb == 0xFF {
 		output = nil
 		err = nil
 		return
 	}
-	if size != 0xFE {
-		output, err = session.read(int(size))
-		return
-	}
+	chunkSize := int(nb)
+	var chunk []byte
 	var tempBuffer bytes.Buffer
-	for {
-		var size1 int
-		if session.UseBigClrChunks {
-			size1, err = session.GetInt(4, true, true)
-		} else {
-			size1, err = session.GetInt(1, false, false)
+	if chunkSize == 0xFE {
+		for chunkSize > 0 {
+			if session.UseBigClrChunks {
+				chunkSize, err = session.GetInt(4, true, true)
+			} else {
+				nb, err = session.GetByte()
+				chunkSize = int(nb)
+			}
+			if err != nil {
+				return
+			}
+			chunk, err = session.GetBytes(chunkSize)
+			if err != nil {
+				return
+			}
+			tempBuffer.Write(chunk)
 		}
-		if err != nil || size1 == 0 {
-			break
-		}
-		rb, err = session.read(size1)
+	} else {
+		chunk, err = session.GetBytes(chunkSize)
 		if err != nil {
 			return
 		}
-		tempBuffer.Write(rb)
+		tempBuffer.Write(chunk)
 	}
 	output = tempBuffer.Bytes()
 	return
+	//var size uint8
+	//var rb []byte
+	//size, err = session.GetByte()
+	//if err != nil {
+	//	return
+	//}
+	//if size == 0 || size == 0xFF {
+	//	output = nil
+	//	err = nil
+	//	return
+	//}
+	//if size != 0xFE {
+	//	output, err = session.read(int(size))
+	//	return
+	//}
+	//
+	//for {
+	//	var size1 int
+	//	if session.UseBigClrChunks {
+	//		size1, err = session.GetInt(4, true, true)
+	//	} else {
+	//		size, err = session.GetByte()
+	//		size1 = int(size)
+	//	}
+	//	if err != nil || size1 == 0 {
+	//		break
+	//	}
+	//	rb, err = session.read(size1)
+	//	if err != nil {
+	//		return
+	//	}
+	//	tempBuffer.Write(rb)
+	//}
+	//output = tempBuffer.Bytes()
+	//return
 }
 
 // GetDlc read variable length bytearray from input buffer

@@ -4,8 +4,9 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
-	"github.com/sijms/go-ora/v2/converters"
 	"time"
+
+	"github.com/wlhet/orago/converters"
 )
 
 type ValueEncoder interface {

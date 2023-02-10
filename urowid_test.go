@@ -2,12 +2,13 @@ package go_ora
 
 import (
 	"encoding/hex"
-	"github.com/sijms/go-ora/v2/converters"
-	"github.com/sijms/go-ora/v2/network"
-	"github.com/sijms/go-ora/v2/trace"
 	"log"
 	"strings"
 	"testing"
+
+	"github.com/wlhet/orago/converters"
+	"github.com/wlhet/orago/network"
+	"github.com/wlhet/orago/trace"
 )
 
 var buffer = `00000000  00 00 01 93 06 00 00 00  00 00 10 17 30 77 d7 6c  |............0w.l|

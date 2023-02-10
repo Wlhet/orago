@@ -5,10 +5,11 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
-	"github.com/sijms/go-ora/v2/converters"
 	"io"
 	"reflect"
 	"strings"
+
+	"github.com/wlhet/orago/converters"
 )
 
 type customType struct {

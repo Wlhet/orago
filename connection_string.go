@@ -3,6 +3,7 @@ package go_ora
 import (
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"net/url"
 	"os"
@@ -36,8 +37,9 @@ const (
 type AuthType int
 
 const (
-	Normal AuthType = 0
-	OS     AuthType = 1
+	Normal   AuthType = 0
+	OS       AuthType = 1
+	Kerberos AuthType = 2
 )
 const defaultPort int = 1521
 
@@ -80,6 +82,7 @@ type ConnectionString struct {
 	password     string
 	Trace        string // Trace file
 	WalletPath   string
+	walletPass   string
 	w            *wallet
 	authType     AuthType
 	//EnList             EnList
@@ -235,9 +238,13 @@ func newConnectionStringFromUrl(databaseUrl string) (*ConnectionString, error) {
 				ret.connOption.InstanceName = val[0]
 			case "WALLET":
 				ret.WalletPath = val[0]
+			case "WALLET PASSWORD":
+				ret.walletPass = val[0]
 			case "AUTH TYPE":
 				if strings.ToUpper(val[0]) == "OS" {
 					ret.authType = OS
+				} else if strings.ToUpper(val[0]) == "KERBEROS" {
+					ret.authType = Kerberos
 				} else {
 					ret.authType = Normal
 				}
@@ -284,6 +291,11 @@ func newConnectionStringFromUrl(databaseUrl string) (*ConnectionString, error) {
 				ret.connOption.SessionInfo.UnixAddress = val[0]
 			case "PROXY CLIENT NAME":
 				ret.connOption.DatabaseInfo.ProxyClientName = val[0]
+			case "FAILOVER":
+				ret.connOption.Failover, err = strconv.Atoi(val[0])
+				if err != nil {
+					ret.connOption.Failover = 0
+				}
 				//case "ENLIST":
 				//	ret.EnList = EnListFromString(val[0])
 				//case "INC POOL SIZE":
@@ -366,10 +378,23 @@ func newConnectionStringFromUrl(databaseUrl string) (*ConnectionString, error) {
 		if len(ret.connOption.ServiceName) == 0 {
 			return nil, errors.New("you should specify server/service if you will use wallet")
 		}
-		ret.w, err = NewWallet(path.Join(ret.WalletPath, "cwallet.sso"))
-		if err != nil {
-			return nil, err
+		if _, err = os.Stat(path.Join(ret.WalletPath, "ewallet.p12")); err == nil && len(ret.walletPass) > 0 {
+			fileData, err := ioutil.ReadFile(path.Join(ret.WalletPath, "ewallet.p12"))
+			if err != nil {
+				return nil, err
+			}
+			ret.w = &wallet{password: []byte(ret.walletPass)}
+			err = ret.w.readPKCS12(fileData)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			ret.w, err = NewWallet(path.Join(ret.WalletPath, "cwallet.sso"))
+			if err != nil {
+				return nil, err
+			}
 		}
+
 		if len(ret.password) == 0 {
 			serv := ret.connOption.Servers[0]
 			cred, err := ret.w.getCredential(serv.Addr, serv.Port, ret.connOption.ServiceName, ret.connOption.UserID)
@@ -378,8 +403,8 @@ func newConnectionStringFromUrl(databaseUrl string) (*ConnectionString, error) {
 			}
 			if cred == nil {
 				return nil, errors.New(
-					fmt.Sprintf("cannot find credentials for server: %s, service: %s,  username: %s",
-						serv, ret.connOption.ServiceName, ret.connOption.UserID))
+					fmt.Sprintf("cannot find credentials for server: %s:%d, service: %s,  username: %s",
+						serv.Addr, serv.Port, ret.connOption.ServiceName, ret.connOption.UserID))
 			}
 			ret.connOption.UserID = cred.username
 			ret.password = cred.password
@@ -407,13 +432,16 @@ func (connStr *ConnectionString) validate() error {
 	if len(connStr.connOption.SID) == 0 && len(connStr.connOption.ServiceName) == 0 {
 		return errors.New("empty SID and service name")
 	}
-	if len(connStr.connOption.UserID) == 0 || len(connStr.password) == 0 {
+	if len(connStr.connOption.UserID) == 0 || len(connStr.password) == 0 && connStr.authType == Normal {
 		connStr.authType = OS
 	}
 	if connStr.authType == OS {
 		if runtime.GOOS == "windows" {
 			connStr.connOption.AuthService = append(connStr.connOption.AuthService, "NTS")
 		}
+	}
+	if connStr.authType == Kerberos {
+		connStr.connOption.AuthService = append(connStr.connOption.AuthService, "KERBEROS5")
 	}
 	if connStr.connOption.SSL {
 		connStr.connOption.Protocol = "tcps"
@@ -431,18 +459,8 @@ func (connStr *ConnectionString) validate() error {
 
 	// get client info
 	var idx int
-	var temp *user.User
-	if userName := os.Getenv("USER"); len(userName) > 0 {
-		temp = &user.User{
-			Uid:      "",
-			Gid:      "",
-			Username: userName,
-			Name:     userName,
-			HomeDir:  "",
-		}
-	} else {
-		temp, _ = user.Current()
-	}
+	var temp = getCurrentUser()
+
 	if temp != nil {
 		idx = strings.Index(temp.Username, "\\")
 		if idx >= 0 {
@@ -490,4 +508,19 @@ func uniqueAppendString(list []string, newItem string, ignoreCase bool) ([]strin
 		list = append(list, newItem)
 	}
 	return list, !found
+}
+
+func getCurrentUser() *user.User {
+	if userName := os.Getenv("USER"); len(userName) > 0 {
+		return &user.User{
+			Uid:      "",
+			Gid:      "",
+			Username: userName,
+			Name:     userName,
+			HomeDir:  "",
+		}
+	} else {
+		temp, _ := user.Current()
+		return temp
+	}
 }
