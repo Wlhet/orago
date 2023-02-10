@@ -1,4 +1,4 @@
-package go_ora
+package orago
 
 import (
 	"bytes"
@@ -160,7 +160,7 @@ func (lob *Lob) putString(data string, charset int) error {
 	return lob.read()
 }
 
-//isTemporary: return true if the lob is temporary
+// isTemporary: return true if the lob is temporary
 func (lob *Lob) isTemporary() bool {
 	if len(lob.sourceLocator) > 7 {
 		if lob.sourceLocator[7]&1 == 1 || lob.sourceLocator[4]&0x40 == 0x40 {

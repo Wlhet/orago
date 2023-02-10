@@ -1,4 +1,4 @@
-package go_ora
+package orago
 
 import "github.com/wlhet/orago/network"
 
